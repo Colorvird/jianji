@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="简集：创建问卷、生成二维码发到微信群，匿名填写，自动汇总，支持修改审批和课表图片识别。" />
+  <meta name="theme-color" content="#3157e8" />
+  <meta property="og:title" content="简集 · 扫码收集与实时汇总" />
+  <meta property="og:description" content="谁都能创建表格。发二维码到群里收集，自动整理成实时汇总表。" />
+  <meta property="og:type" content="website" />
+  <title>简集 · 扫码收集与实时汇总</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <noscript><div class="noscript">简集需要启用 JavaScript 才能使用。</div></noscript>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <header class="site-header" id="siteHeader">
+    <div class="header-inner">
+      <a class="brand" href="/" data-link aria-label="简集首页">
+        <span class="brand-mark">简</span>
+        <span class="brand-copy">
+          <strong>简集</strong>
+          <small>扫码收集 · 实时汇总</small>
+        </span>
+      </a>
+      <nav class="header-nav" aria-label="主导航">
+        <a href="/" data-link class="nav-link">首页</a>
+        <button class="nav-link" type="button" data-action="scroll-created">我创建的</button>
+        <button class="button button-primary button-small" type="button" data-action="create-survey">创建表格</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app" class="app-main" aria-live="polite"></main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span>简集 · 不注册也能用的收集工具</span>
+      <span>数据存储在你的服务器 · 管理链接请妥善保存</span>
+    </div>
+  </footer>
+
+  <div id="modalRoot"></div>
+  <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+  <script src="/occupancy.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

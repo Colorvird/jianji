@@ -1,0 +1,5 @@
+{$DOMAIN} {
+    reverse_proxy jianji:8787 {
+        flush_interval -1
+    }
+}

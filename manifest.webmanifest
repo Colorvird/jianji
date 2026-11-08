@@ -1,0 +1,17 @@
+{
+  "name": "简集 · 问卷与汇总",
+  "short_name": "简集",
+  "description": "免注册扫码收集、修改审批、课表识别与实时汇总工具",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f6fa",
+  "theme_color": "#3157e8",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

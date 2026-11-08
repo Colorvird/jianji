@@ -1,0 +1,16 @@
+{
+  "name": "jianji",
+  "version": "1.0.0",
+  "private": true,
+  "description": "简集 · 免注册扫码收集、修改审批与实时汇总（Node.js + SQLite 可部署版）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/regression.js",
+    "start:env": "node --env-file=.env server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

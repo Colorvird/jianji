@@ -1,0 +1,35 @@
+services:
+  jianji:
+    build: .
+    restart: unless-stopped
+    environment:
+      PUBLIC_BASE_URL: https://${DOMAIN:?Please set DOMAIN in .env}
+      JIANJI_DATA_DIR: /app/data
+      OCR_PROVIDER: ${OCR_PROVIDER:-ocrspace}
+      OCR_SPACE_API_KEY: ${OCR_SPACE_API_KEY:-helloworld}
+      OCR_ENDPOINT: ${OCR_ENDPOINT:-}
+      OCR_API_KEY: ${OCR_API_KEY:-}
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Please set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - jianji
+volumes:
+  caddy_data:
+  caddy_config:

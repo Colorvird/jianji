@@ -1,0 +1,14 @@
+services:
+  jianji:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      OCR_PROVIDER: ${OCR_PROVIDER:-ocrspace}
+      OCR_SPACE_API_KEY: ${OCR_SPACE_API_KEY:-helloworld}
+      OCR_ENDPOINT: ${OCR_ENDPOINT:-}
+      OCR_API_KEY: ${OCR_API_KEY:-}
+    volumes:
+      - ./data:/app/data
