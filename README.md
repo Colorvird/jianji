@@ -45,21 +45,25 @@
 
 ## 三、本地运行
 
-要求 **Node.js 24 或更高版本**（使用内置 `node:sqlite`）。
+要求 **Node.js 24 或更高版本**（项目使用内置 `node:sqlite`，无需 `npm install`）。
 
-```powershell
-cd C:\Users\Administrator\Documents\Codex\2026-11-07\1-3\outputs
+```bash
+git clone https://github.com/Colorvird/jianji.git
+cd jianji
+node -v          # 确认 >= 24
 node server.js
 ```
 
-然后打开 <http://localhost:8787>。数据库、上传的课程表图片都在 `data/` 目录：
+浏览器打开 <http://localhost:8787>。
+
+首次运行会自动创建 `data/` 目录：
 
 ```text
 data/jianji.db           SQLite 数据库
 data/uploads/            课程表原图
 ```
 
-Windows 也可以双击 `start.cmd`。删除整个 `data/` 目录会回到全新状态。
+Windows 用户也可以双击 `start.cmd`。删除整个 `data/` 目录会回到全新状态。
 
 ## 四、让外网访问
 
