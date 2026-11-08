@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/regression.js",
+    "test": "node test/ocr.js && node test/frontend-ocr.js && node test/participation.js && node test/regression.js",
     "start:env": "node --env-file=.env server.js",
     "dev": "node --watch server.js"
   },

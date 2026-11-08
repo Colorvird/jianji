@@ -1,5 +1,5 @@
 'use strict';
-const { match: matchActivity } = require('../occupancy');
+const { buildParticipation } = require('./participation');
 
 const crypto = require('node:crypto');
 const { db, uid, tx } = require('./db');
@@ -70,7 +70,7 @@ function normalizeDeadline(value) {
 
 function normalizePeriodTimes(value) {
   const source = Array.isArray(value) ? value : [];
-  return Array.from({ length: 13 }, (_, index) => {
+  return Array.from({ length: 14 }, (_, index) => {
     const item = source[index] && typeof source[index] === 'object' ? source[index] : {};
     const start = cleanText(item.start, 5);
     const end = cleanText(item.end, 5);
@@ -248,7 +248,8 @@ function normalizeTimetable(value) {
     text: cleanText(value.text, 5000),
     imageUrl,
     provider: cleanText(value.provider, 40) || 'manual',
-    demo: Boolean(value.demo)
+    demo: Boolean(value.demo),
+    emptyWeek: value.emptyWeek === true && busy.length === 0
   };
 }
 
@@ -297,8 +298,8 @@ function validateAnswers(questions, rawAnswers, context = {}) {
     }
     if (question.type === 'timetable') {
       const timetable = normalizeTimetable(value);
-      if (question.required && (!timetable || (!timetable.busy.length && !timetable.text))) {
-        throw new AppError(400, 'REQUIRED', `请上传或填写「${question.label}」。`);
+      if ((question.required && !timetable) || (timetable && !timetable.busy.length && !timetable.emptyWeek)) {
+        throw new AppError(400, 'REQUIRED', `请标记「${question.label}」的有课节次，或确认本周无课。`);
       }
       if (timetable) {
         if (timetable.imageUrl && context.surveyId && context.respondentHash) {
@@ -468,7 +469,7 @@ function buildTimetableStats(questions, submissions, surveyRow) {
   for (const question of questions.filter((item) => item.type === 'timetable')) {
     for (const submission of submissions) {
       const value = submission.answers[question.id];
-      if (!value || !Array.isArray(value.busy) || !value.busy.length) continue;
+      if (!value || !Array.isArray(value.busy) || (!value.busy.length && !value.emptyWeek)) continue;
       respondents += 1;
       for (const block of value.busy) {
         const periods = Math.max(1, (block.endPeriod || block.startPeriod) - block.startPeriod + 1);
@@ -477,35 +478,15 @@ function buildTimetableStats(questions, submissions, surveyRow) {
       }
     }
   }
-  const availability = [];
-  if (surveyRow.timetable_mode !== 'clock') {
-  for (const question of questions.filter((item) => item.type === 'timeslots')) {
-    const options = question.options.map((label) => ({ label, window: slotWindow(label) })).filter((item) => item.window);
-    if (!options.length) continue;
-    const timetableQuestion = questions.find((item) => item.type === 'timetable');
-    if (!timetableQuestion) continue;
-    const relevant = submissions.filter((submission) => {
-      const value = submission.answers[timetableQuestion.id];
-      return value && Array.isArray(value.busy);
-    });
-    availability.push({
-      questionId: question.id,
-      label: question.label,
-      options: options.map(({ label, window }) => {
-        let free = 0;
-        let conflict = 0;
-        let unknown = 0;
-        for (const submission of relevant) {
-          const status = matchActivity(submission.answers[timetableQuestion.id], periodTimes, window);
-          if (status === 'conflict') conflict += 1;
-          else if (status === 'unknown') unknown += 1;
-          else free += 1;
-        }
-        return { label, free, conflict, unknown, total: relevant.length };
-      })
-    });
-  }
-  }
+  const availability = buildParticipation(questions, submissions, {
+    timetableMode: surveyRow.timetable_mode, periodTimes
+  }).map(group => ({
+    questionId: group.questionId, label: group.label,
+    options: group.options.map(option => ({
+      label: option.label, free: option.count, conflict: option.conflicts.length,
+      unknown: option.unknown.length, total: option.total
+    }))
+  }));
   return {
     respondents,
     courseCount: busyCount,
@@ -534,6 +515,10 @@ function buildStats(questions, submissions, target, surveyId, surveyRow) {
     latestAtText: fmtDateTime(latest),
     optionStats: buildOptionStats(questions, submissions),
     timetable: buildTimetableStats(questions, submissions, surveyRow),
+    participation: buildParticipation(questions, submissions, {
+      timetableMode: surveyRow.timetable_mode,
+      periodTimes: normalizePeriodTimes(parseJson(surveyRow.period_times_json, []))
+    }),
     revision: revisionFor(surveyId, surveyRow)
   };
 }
@@ -867,12 +852,20 @@ function serializeAnswer(question, value) {
   return Array.isArray(value) ? value.join(' / ') : String(value);
 }
 
-function csvFor(rawAdminToken) {
+function csvFor(rawAdminToken, view = 'summary') {
   const survey = getAdminSurvey(rawAdminToken);
+  const escape = (value) => `"${String(value === undefined || value === null ? '' : value).replace(/"/g, '""')}"`;
+  if (view !== 'raw' && survey.stats.participation.length) {
+    const names = members => members.map(member => member.name).join('、');
+    const rows = survey.stats.participation.flatMap(group => group.options.map(option => [
+      option.label, names(option.participants), option.count, names(option.conflicts), names(option.unknown), group.label
+    ]));
+    return '\ufeff' + [['时间段', '可参与人员', '可参与人数', '有课冲突人员', '待确认人员', '活动'], ...rows]
+      .map(row => row.map(escape).join(',')).join('\r\n');
+  }
   const nameQuestion = survey.questions.find((question) => question.type === 'short' && NAME_PATTERN.test(question.label));
   const columns = survey.questions.filter((question) => !nameQuestion || question.id !== nameQuestion.id);
   const header = ['填写人', ...columns.map((question) => question.type === 'timetable' ? `${question.label}（结构化）` : question.label), '首次提交', '最后更新', '状态'];
-  const escape = (value) => `"${String(value === undefined || value === null ? '' : value).replace(/"/g, '""')}"`;
   const lines = survey.submissions.map((submission) => {
     const values = columns.map((question) => serializeAnswer(question, submission.answers[question.id]));
     return [

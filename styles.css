@@ -444,6 +444,15 @@ textarea.input { resize: vertical; }
 .text-wrap { white-space: pre-line; overflow-wrap: anywhere; }
 .muted-dash { color: #b1b8c6; }
 .value-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.participation-table { min-width: 650px; font-size: 13px; }
+.participation-table th { font-size: 12px; }
+.participation-table td:nth-child(2) { min-width: 210px; max-width: 600px; }
+.participation-table td:nth-child(3) { white-space: nowrap; }
+.participation-note { color: var(--muted, #647089); font-size: 12px; line-height: 1.8; margin: 0 0 16px; }
+.participation-group { margin-bottom: 20px; }
+.participation-group h3 { margin: 0 0 10px; font-size: 15px; }
+.raw-responses { margin-top: 24px; }
+.raw-responses > summary { cursor: pointer; padding: 14px 0; font-weight: 600; }
 .value-chip { padding: 3px 6px; color: #53617a; border-radius: 5px; background: #f2f4f8; font-size: 9px; }
 .course-list { display: flex; flex-wrap: wrap; gap: 4px; }
 .course-chip { display: inline-flex; flex-direction: column; gap: 1px; max-width: 190px; padding: 5px 7px; border: 1px solid #e3e8f2; border-radius: 7px; background: #fbfcff; }
@@ -578,6 +587,11 @@ textarea.input { resize: vertical; }
 .upload-icon svg { width: 18px; height: 18px; }
 .ocr-working { display: flex; align-items: center; gap: 14px; min-height: 125px; padding: 22px; border: 1px dashed #c7d4ef; border-radius: 12px; background: #fbfcff; }
 .ocr-working strong { font-size: 12px; }.ocr-working p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+.timetable-layout { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.timetable-layout label { display: grid; gap: 6px; flex: 1 1 220px; min-width: 0; font-size: 12px; }
+.timetable-layout select { width: 100%; min-width: 0; }
+.timetable-warning { padding: 10px 12px; color: #9c351b; background: #fff2ee; border-left: 3px solid #ce6041; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.timetable-empty { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; }
 .ocr-result-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 15px 0 8px; }
 .ocr-result-head > div { display: flex; flex-direction: column; }
 .ocr-result-head strong { font-size: 11.5px; }.ocr-result-head span { margin-top: 2px; color: var(--muted); font-size: 9px; }

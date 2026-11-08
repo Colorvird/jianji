@@ -97,7 +97,7 @@ function accessInfo(access) {
 }
 
 const WEEK_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-const PERIOD_COUNT = 13;
+const PERIOD_COUNT = 14;
 const DEFAULT_PERIOD_TIMES = [
   ['08:00', '08:45'], ['08:55', '09:40'], ['10:00', '10:45'], ['10:55', '11:40'],
   ['14:00', '14:45'], ['14:55', '15:40'], ['16:00', '16:45'], ['16:55', '17:40'],
@@ -146,7 +146,7 @@ function busyCell(block, periodTimes) {
 function formatValue(question, value) {
   if (value === undefined || value === null || value === '') return '<span class="muted-dash">—</span>';
   if (question.type === 'timetable') {
-    if (!value.busy || !value.busy.length) return `<span class="text-wrap">${esc(value.text || '未发现课程')}</span>`;
+    if (!value.busy || !value.busy.length) return `<span class="text-wrap">${esc(value.emptyWeek ? '已确认本周无课' : value.text || '待确认课表')}</span>`;
     const periodTimes = state.manageData?.survey?.periodTimes || state.resultData?.survey?.periodTimes || [];
     return `<div class="course-list compact">${value.busy.slice(0, 4).map((block) => busyCell(block, periodTimes)).join('')}${value.busy.length > 4 ? `<span class="more-chip">+${value.busy.length - 4} 段</span>` : ''}</div>`;
   }
@@ -244,6 +244,10 @@ const state = {
   fillData: null,
   fillDraft: {},
   timetableBusy: {},
+  timetableFiles: {},
+  timetablePreviews: {},
+  timetableLayouts: {},
+  timetableWarnings: {},
   fillSubmitting: false,
   resultData: null,
   resultLastRevision: '',
@@ -1045,7 +1049,31 @@ function renderSummaryTab() {
     </section>`;
 }
 
-function renderSummaryTable(data) {
+function renderParticipationTable(data) {
+  const groups = data.stats.participation || [];
+  const names = (members) => members.length
+    ? `<div class="value-chips">${members.map(member => `<span class="value-chip">${esc(member.name)}</span>`).join('')}</div>`
+    : '<span class="muted-dash">—</span>';
+  return `<div class="participation-summary"><p class="participation-note">按时间段整理人员。有勾选时以勾选范围为准；未勾选且有课表时，按课表空闲时段推算。有课冲突或信息不足的人员单列，课表空闲仅表示时间可用。</p>${groups.map(group => `
+    <section class="participation-group"><h3>${esc(group.label)}</h3>
+      <div class="table-shell"><div class="table-scroll"><table class="data-table participation-table">
+        <thead><tr><th class="sticky-col">时间段</th><th>可参与人员</th><th>人数</th><th>有课冲突</th><th>待确认</th></tr></thead>
+        <tbody>${group.options.map(option => `<tr>
+          <td class="sticky-col"><strong>${esc(option.label)}</strong></td>
+          <td>${option.count ? names(option.participants) : '<span class="muted-dash">暂无可参与人员</span>'}</td>
+          <td><strong>${option.count}</strong> 人</td>
+          <td>${names(option.conflicts)}</td><td>${names(option.unknown)}</td>
+        </tr>`).join('')}</tbody>
+      </table></div></div>
+    </section>`).join('')}</div>`;
+}
+
+function renderSummaryTable(data, raw = false) {
+  if (!raw && data.stats.participation?.length) {
+    return `${renderParticipationTable(data)}<details class="raw-responses"><summary>查看原始答卷明细</summary>
+      <p><a class="text-button" href="/api/surveys/admin/${esc(state.route.token)}/export.csv?view=raw">导出原始答卷 CSV</a></p>
+      ${renderSummaryTable(data, true)}</details>`;
+  }
   const columns = data.questions;
   return `<div class="table-shell"><div class="table-scroll"><table class="data-table summary-table">
     <thead><tr><th class="sticky-col">填写人</th>${columns.map((question) => `<th><span>${esc(question.label)}</span>${question.type === 'timetable' ? '<small class="th-note">有课节次 · 已换算时间</small>' : ''}</th>`).join('')}<th>状态</th><th>最后更新</th></tr></thead>
@@ -1346,21 +1374,30 @@ function renderTimetableEditor(question, value, context) {
   if (context.busy) {
     return `<div class="ocr-working"><span class="spinner"></span><div><strong>正在识别课程表…</strong><p>正在判断星期和节次，请稍候。</p></div></div>`;
   }
-  const hasImage = value && value.imageUrl;
+  const preview = state.timetablePreviews[question.id] || (value?.imageUrl ? imageSrc(value.imageUrl, context.token) : '');
+  const hasImage = Boolean(preview);
   const busy = value && Array.isArray(value.busy) ? value.busy : [];
   const showGrid = Boolean(value);
+  const layouts = [['auto', '自动定位星期和节次'], ['12-7', '12节 · 7天（无午休行）'], ['13-7', '13节 · 7天（无午休行）'], ['14-7', '14节 · 7天（无午休行）'], ['12-5', '12节 · 5天（无午休行）'], ['13-5', '13节 · 5天（无午休行）'], ['14-5', '14节 · 5天（无午休行）'], ['noon-7', '13节 · 7天（第5节后两行午休）']];
   return `<div class="timetable-editor">
+    <div class="timetable-layout"><label>课表版式<select class="input" data-timetable-layout="${question.id}">${layouts.map(([key, label]) => `<option value="${key}" ${key === (state.timetableLayouts[question.id] || 'auto') ? 'selected' : ''}>${label}</option>`).join('')}</select></label>${state.timetableFiles[question.id] ? `<button class="text-button" type="button" data-action="timetable-retry" data-qid="${question.id}">${icon('refresh')}重新识别</button>` : ''}</div>
     <label class="upload-zone ${hasImage ? 'has-image' : ''}">
       <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-timetable-file="${question.id}" />
-      ${hasImage ? `<img src="${esc(imageSrc(value.imageUrl, context.token))}" alt="课程表截图" />` : `<span class="upload-icon">${icon('upload')}</span><strong>点击上传课程表截图</strong><span>支持 JPG / PNG / WebP，最大 8 MB</span>`}
+      ${hasImage ? `<img src="${esc(preview)}" alt="课程表截图" />` : `<span class="upload-icon">${icon('upload')}</span><strong>点击上传课程表截图</strong><span>支持 JPG / PNG / WebP，最大 8 MB</span>`}
     </label>
-    ${showGrid ? `<div class="ocr-result-head"><div><strong>有课节次</strong><span>识别到 ${busy.length} 个连续有课时段 · ${value.demo ? '演示识别服务' : value.provider || '通用 OCR'}</span></div><button class="text-button" type="button" data-action="timetable-clear-busy" data-qid="${question.id}">${icon('refresh')}清空重标</button></div>` : ''}
+    ${state.timetableWarnings[question.id] ? `<p class="timetable-warning" role="alert">${esc(state.timetableWarnings[question.id])}</p>` : ''}
+    ${showGrid ? `<div class="ocr-result-head"><div><strong>有课节次</strong><span>已标记 ${busy.length} 个连续有课时段 · ${esc(value.demo ? '演示识别服务' : value.provider || '手动标记')}</span></div><button class="text-button" type="button" data-action="timetable-clear-busy" data-qid="${question.id}">${icon('refresh')}清空重标</button></div>` : ''}
     ${showGrid ? renderBusyGrid(question.id, value, 'fill') : ''}
+    ${showGrid ? renderEmptyWeek(question.id, value, 'fill') : ''}
     ${showGrid ? renderBusyWindows(value) : ''}
     ${showGrid ? renderActivityMatches(value) : ''}
     ${!showGrid ? `<div class="manual-row"><button class="text-button" type="button" data-action="timetable-manual-grid" data-qid="${question.id}">${icon('plus')}没有截图，手动标记有课节次</button></div>` : ''}
     ${showGrid ? `<p class="ocr-hint">${icon('info')}系统只判断“星期几、第几节有课”。如果识别有遗漏，直接点击网格修正；提交后会按创建者设置的节次时间自动比对活动时段。</p>` : ''}
   </div>`;
+}
+
+function renderEmptyWeek(qid, value, mode) {
+  return `<label class="timetable-empty"><input type="checkbox" data-empty-week="${qid}" data-busy-mode="${mode}" ${value.emptyWeek ? 'checked' : ''} />确认本周无课</label>`;
 }
 
 function activeTimetableSurvey() {
@@ -1463,7 +1500,8 @@ function renderBusyGrid(qid, value, mode) {
   const busy = value && Array.isArray(value.busy) ? value.busy : [];
   const mappedEnd = periodTimes.reduce((max, item, index) => item.start || item.end ? index + 1 : max, 0);
   const busyEnd = busy.reduce((max, block) => Math.max(max, block.endPeriod || 0), 0);
-  const lastPeriod = Math.max(13, Math.min(PERIOD_COUNT, Math.max(mappedEnd, busyEnd)));
+  const selectedPeriods = Number((state.timetableLayouts[qid] || '').split('-')[0]) || 0;
+  const lastPeriod = Math.max(13, Math.min(30, Math.max(mappedEnd, busyEnd, selectedPeriods)));
   return `<div class="busy-grid-shell"><table class="busy-grid"><thead><tr><th class="busy-period-col">节次</th>${WEEK_DAYS.map((day) => `<th>${day}</th>`).join('')}</tr></thead><tbody>
     ${Array.from({ length: lastPeriod }, (_, index) => {
       const period = index + 1;
@@ -1502,6 +1540,7 @@ function toggleBusyCell(input) {
   if (input.checked) next.set(key, { day, period });
   else next.delete(key);
   value.busy = mergeBusyCells([...next.values()]);
+  value.emptyWeek = false;
   value.provider = value.provider || 'manual';
   holder[qid] = value;
   input.closest('.busy-check')?.classList.toggle('checked', input.checked);
@@ -1578,43 +1617,88 @@ async function handleTimetableFile(input) {
     toast('图片不能超过 8 MB', 'error');
     return;
   }
+  state.timetableFiles[qid] = file;
+  await recognizeTimetableFile(qid, file);
+}
+
+async function recognizeTimetableFile(qid, file) {
+  if (!file || state.timetableBusy[qid]) return;
+  const version = state.routeVersion;
+  const token = state.route.token;
+  const isCurrent = () => version === state.routeVersion && state.route.page === 'fill' && state.route.token === token;
+  const previous = state.fillDraft[qid];
+  let automatic = null;
   state.timetableBusy[qid] = true;
+  state.timetableWarnings[qid] = '';
   refreshFillQuestion(qid);
   try {
     const originalUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file);
     });
+    if (!isCurrent()) return;
+    state.timetablePreviews[qid] = originalUrl;
     const image = await loadImageElement(originalUrl);
     const canvas = document.createElement('canvas');
-    canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+    const scale = Math.min(1, 2400 / Math.max(image.naturalWidth, image.naturalHeight));
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
     const context = canvas.getContext('2d', { willReadFrequently: true });
-    context.drawImage(image, 0, 0);
-    const local = TimetableOccupancy.detect(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const layout = state.timetableLayouts[qid] || 'auto';
+    const [count, days] = layout.split('-');
+    const options = {
+      periods: count === 'noon' ? [1, 2, 3, 4, 5, 0, 0, 6, 7, 8, 9, 10, 11, 12, 13] : Array.from({ length: Number(count) || 0 }, (_, i) => i + 1),
+      dayCount: Number(days),
+      strict: true
+    };
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    automatic = layout === 'auto' ? TimetableOccupancy.detectAuto(pixels, canvas.width, canvas.height) : null;
+    const local = layout === 'auto' ? null : TimetableOccupancy.detect(pixels, canvas.width, canvas.height, options);
+    if (!isCurrent()) return;
     if (local) {
       state.fillDraft[qid] = local;
-      toast('已按13节、两行午休模板识别，请核对有课网格');
+      toast('已按所选版式识别，请对照原图核对节次');
       return;
     }
     const dataUrl = await fileToDataUrl(file);
-    const result = await api('POST', `/api/surveys/fill/${state.route.token}/ocr`, {
+    const result = await api('POST', `/api/surveys/fill/${token}/ocr`, {
       dataUrl,
       filename: file.name,
       questionId: qid
     });
     const analysis = await analyzeTimetablePixels(dataUrl, result.grid, result.busy);
+    if (!isCurrent()) return;
+    if (!analysis.busy.length) throw new Error('没有确认到有课节次，请对照原图标记；本周无课时请单独确认。');
     state.fillDraft[qid] = {
       busy: analysis.busy,
       text: result.text,
       imageUrl: result.imageUrl,
       provider: result.provider,
-      demo: result.demo
+      demo: result.demo,
+      emptyWeek: false
     };
+    if (result.grid?.columns?.length && (result.grid.columns.length < 5 || result.grid.periods[0]?.period !== 1)) {
+      state.timetableWarnings[qid] = '只定位到部分星期或节次，请对照原图补全遗漏；建议上传包含全部星期和节次的完整截图。';
+    }
     toast(result.demo ? '课程表已识别（当前为演示识别服务）' : `识别完成：${analysis.busy.length} 个有课时段，请检查网格`, result.demo ? 'info' : 'success');
   } catch (error) {
-    toast(error.message, 'error');
+    if (!isCurrent()) return;
+    if (automatic && !previous?.busy?.length && !previous?.emptyWeek) {
+      state.fillDraft[qid] = automatic;
+      const { rowCount, dayCount } = automatic.layout;
+      state.timetableWarnings[qid] = `文字识别未完成，已按 ${rowCount} 节、${dayCount} 天的彩色网格生成初稿，暂按周一开始、无午休行排列。请核对星期和节次，有午休行时请选择对应版式后重试。`;
+      toast('已生成本地识别初稿，请对照原图核对', 'info');
+    } else {
+      state.fillDraft[qid] = previous || { busy: [], text: '', imageUrl: '', provider: 'manual', demo: false, emptyWeek: false };
+      const reason = error.message || '识别失败，请对照原图标记有课节次。';
+      state.timetableWarnings[qid] = previous ? `${reason} 已保留重试前的标记；当前预览为本次上传的图片，请核对。` : reason;
+      toast(reason, 'error');
+    }
   } finally {
     state.timetableBusy[qid] = false;
-    if (state.route.page === 'fill' && state.fillData) refreshFillQuestion(qid);
+    if (isCurrent() && state.fillData) refreshFillQuestion(qid);
   }
 }
 
@@ -1645,27 +1729,7 @@ async function analyzeTimetablePixels(dataUrl, grid, textBusy) {
     const cells = busyCells({ busy: baseBusy });
     for (const column of grid.columns) {
       for (const row of grid.periods) {
-        const left = Math.max(0, Math.ceil(column.left + (column.right - column.left) * 0.14));
-        const right = Math.min(width, Math.floor(column.right - (column.right - column.left) * 0.14));
-        const top = Math.max(0, Math.ceil(row.top + (row.bottom - row.top) * 0.14));
-        const bottom = Math.min(height, Math.floor(row.bottom - (row.bottom - row.top) * 0.14));
-        if (right - left < 4 || bottom - top < 4) continue;
-        const step = Math.max(1, Math.floor(Math.min(right - left, bottom - top) / 24));
-        let total = 0;
-        let content = 0;
-        for (let y = top; y < bottom; y += step) {
-          for (let x = left; x < right; x += step) {
-            const index = (y * width + x) * 4;
-            const red = pixels[index];
-            const green = pixels[index + 1];
-            const blue = pixels[index + 2];
-            const brightness = (red + green + blue) / 3;
-            const saturation = Math.max(red, green, blue) - Math.min(red, green, blue);
-            total += 1;
-            if (brightness < 190 || saturation > 32) content += 1;
-          }
-        }
-        if (total && content / total > 0.045) cells.push({ day: column.day, period: row.period });
+        if (TimetableOccupancy.coloredCell(pixels, width, height, column.left, column.right, row.top, row.bottom)) cells.push({ day: column.day, period: row.period });
       }
     }
     return { busy: mergeBusyCells(cells), pixelUsed: true };
@@ -1680,7 +1744,8 @@ function openManualBusyGrid(questionId) {
     text: '',
     imageUrl: '',
     provider: 'manual',
-    demo: false
+    demo: false,
+    emptyWeek: false
   };
   refreshFillQuestion(questionId);
 }
@@ -1688,13 +1753,13 @@ function openManualBusyGrid(questionId) {
 function validateFillDraft() {
   if (!state.fillData) return true;
   for (const question of state.fillData.questions) {
-    if (!question.required) continue;
+    if (!question.required && !(question.type === 'timetable' && state.fillDraft[question.id])) continue;
     const value = state.fillDraft[question.id];
     let valid = true;
     if (question.type === 'short' || question.type === 'textarea') valid = Boolean(String(value || '').trim());
     else if (question.type === 'radio') valid = Boolean(value);
     else if (question.type === 'checkbox' || question.type === 'timeslots') valid = Array.isArray(value) && value.length > 0;
-    else if (question.type === 'timetable') valid = Boolean(value && ((value.busy && value.busy.length) || String(value.text || '').trim()));
+    else if (question.type === 'timetable') valid = Boolean(value && ((value.busy && value.busy.length) || value.emptyWeek === true));
     if (!valid) {
       const element = $(`[data-fill-question="${question.id}"]`);
       if (element) {
@@ -1833,7 +1898,10 @@ function receiptButton() {
   return `<button class="text-button subtle" type="button" data-action="copy-receipt" title="在另一台设备上读取本人身份">${icon('link')}复制修改回执</button>`;
 }
 
-function renderResultTable(data) {
+function renderResultTable(data, raw = false) {
+  if (!raw && data.stats.participation?.length) {
+    return `${renderParticipationTable(data)}<details class="raw-responses"><summary>查看原始答卷明细</summary>${renderResultTable(data, true)}</details>`;
+  }
   return `<div class="table-shell result-table-shell"><div class="table-scroll"><table class="data-table result-table">
     <thead><tr><th class="sticky-col">填写人</th>${data.questions.map((question) => `<th><span>${esc(question.label)}</span>${question.type === 'timetable' ? '<small class="th-note">课表识别</small>' : ''}</th>`).join('')}<th>状态</th><th>更新</th></tr></thead>
     <tbody>${data.submissions.map((submission) => `<tr class="${submission.mine ? 'my-row' : ''}">
@@ -1862,6 +1930,7 @@ function renderEditQuestion(question, index) {
       ${timetable.imageUrl ? `<div class="ocr-image-preview"><img src="${esc(imageSrc(timetable.imageUrl, state.route.token))}" alt="课程表截图" /><span>原图</span></div>` : ''}
       <div class="ocr-result-head"><div><strong>有课节次</strong><span>${timetable.busy.length} 个连续有课时段${timetable.demo ? ' · 演示识别结果' : ''}</span></div></div>
       ${renderBusyGrid(qid, timetable, 'edit')}
+      ${renderEmptyWeek(qid, timetable, 'edit')}
       ${renderBusyWindows(timetable)}
       ${renderActivityMatches(timetable)}
     </div>`;
@@ -1917,13 +1986,13 @@ function syncEditDraftFromDom() {
 
 function validateDraftAnswers(questions, draft) {
   for (const question of questions) {
-    if (!question.required) continue;
+    if (!question.required && !(question.type === 'timetable' && draft[question.id])) continue;
     const value = draft[question.id];
     let valid = true;
     if (question.type === 'short' || question.type === 'textarea') valid = Boolean(String(value || '').trim());
     else if (question.type === 'radio') valid = Boolean(value);
     else if (question.type === 'checkbox' || question.type === 'timeslots') valid = Array.isArray(value) && value.length > 0;
-    else if (question.type === 'timetable') valid = Boolean(value && ((value.busy && value.busy.length) || String(value.text || '').trim()));
+    else if (question.type === 'timetable') valid = Boolean(value && ((value.busy && value.busy.length) || value.emptyWeek === true));
     if (!valid) {
       const element = $(`[data-edit-question="${question.id}"]`);
       if (element) { element.classList.add('has-error'); element.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
@@ -2076,9 +2145,10 @@ function handleAction(action, element) {
   if (action === 'open-edit-submission') return openEditSubmissionModal();
   if (action === 'copy-receipt') return copyMyReceipt();
   if (action === 'timetable-manual-grid') return openManualBusyGrid(element.dataset.qid);
+  if (action === 'timetable-retry') return recognizeTimetableFile(element.dataset.qid, state.timetableFiles[element.dataset.qid]);
   if (action === 'timetable-clear-busy') {
     const value = state.fillDraft?.[element.dataset.qid];
-    if (value) value.busy = [];
+    if (value) { value.busy = []; value.text = ''; value.emptyWeek = false; }
     if (state.route.page === 'fill' && state.fillData) refreshFillQuestion(element.dataset.qid);
     return;
   }
@@ -2174,6 +2244,21 @@ document.addEventListener('input', (event) => {
 
 document.addEventListener('change', (event) => {
   const target = event.target;
+  if (target.matches('[data-timetable-layout]')) {
+    state.timetableLayouts[target.dataset.timetableLayout] = target.value;
+    return;
+  }
+  if (target.matches('[data-empty-week]')) {
+    const qid = target.dataset.emptyWeek;
+    const holder = target.dataset.busyMode === 'edit' ? state.editDraft : state.fillDraft;
+    const value = holder[qid];
+    if (!value) return;
+    value.emptyWeek = target.checked;
+    if (target.checked) { value.busy = []; value.text = ''; }
+    if (target.dataset.busyMode === 'edit') rerenderEditQuestion(qid);
+    else refreshFillQuestion(qid);
+    return;
+  }
   if (target.matches('[data-timetable-file]')) {
     handleTimetableFile(target);
     return;

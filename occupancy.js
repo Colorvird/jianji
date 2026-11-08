@@ -11,12 +11,34 @@
     }
     return result.filter(g => g.length < 8).map(g => g[Math.floor(g.length / 2)]);
   }
-  function detect(data, width, height) {
+  function coloredCell(data, width, height, left, right, top, bottom) {
+    const dx = right - left, dy = bottom - top;
+    const x0 = Math.max(0, Math.ceil(left + dx * .15)), x1 = Math.min(width, Math.floor(right - dx * .15));
+    const y0 = Math.max(0, Math.ceil(top + dy * .15)), y1 = Math.min(height, Math.floor(bottom - dy * .15));
+    if (x1 - x0 < 4 || y1 - y0 < 4) return false;
+    const step = Math.max(1, Math.floor(Math.min(x1 - x0, y1 - y0) / 24));
+    let count = 0, hit = 0;
+    for (let y = y0; y < y1; y += step) {
+      for (let x = x0; x < x1; x += step) {
+        const i = (y * width + x) * 4;
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        count++;
+        if (Math.max(r, g, b) - Math.min(r, g, b) > 18 && (r + g + b) / 3 < 248) hit++;
+      }
+    }
+    // Text, grid lines and gray backgrounds alone are not course blocks.
+    return count > 0 && hit / count > .2;
+  }
+  function detect(data, width, height, options = {}) {
+    const periods = options.periods || [1, 2, 3, 4, 5, 0, 0, 6, 7, 8, 9, 10, 11, 12, 13];
+    const dayCount = options.dayCount || 7;
+    if (![5, 7].includes(dayCount) || ![12, 13, 14, 15].includes(periods.length)) return null;
+    const rowCount = periods.length;
     const neutral = (x, y) => {
       const i = (y * width + x) * 4;
       const r = data[i], g = data[i + 1], b = data[i + 2];
       const light = (r + g + b) / 3;
-      return Math.max(r, g, b) - Math.min(r, g, b) < 12 && light > 160 && light < 244;
+      return Math.max(r, g, b) - Math.min(r, g, b) < 12 && light > 50 && light < 244;
     };
     const candidates = [];
     for (let y = 0; y < height; y++) {
@@ -25,47 +47,53 @@
       if (hit / count > .35) candidates.push(y);
     }
     const lines = groups(candidates);
-    // Supported layout: 13 periods, with two noon rows after period 5.
-    // Refuse other layouts rather than assigning arbitrary period numbers.
+    // Reject subgrids when inferring a layout: 12 rows within a 14-row table
+    // must not become a different timetable.
+    const completeSequence = (sequence, all, step) => {
+      const tolerance = Math.max(1, step * .04);
+      return !all.some(value =>
+        (value >= sequence[0] - step - tolerance && value <= sequence.at(-1) + step + tolerance)
+        && !sequence.some(edge => Math.abs(value - edge) <= tolerance)
+      );
+    };
     let rows = null;
     for (let i = 0; i < lines.length && !rows; i++) {
       for (let j = i + 1; j < lines.length && !rows; j++) {
-        const step = (lines[j] - lines[i]) / 15;
-        if (step < height / 30 || step > height / 12) continue;
-        const sequence = Array.from({ length: 16 }, (_, k) => lines.find(y => Math.abs(y - lines[i] - k * step) < step * .025));
-        if (sequence.every(y => y !== undefined)) rows = sequence;
+        const step = (lines[j] - lines[i]) / rowCount;
+        if (step < height / (rowCount * 2) || step > height / (rowCount * .8)) continue;
+        const sequence = Array.from({ length: rowCount + 1 }, (_, k) => lines.find(y => Math.abs(y - lines[i] - k * step) <= Math.max(1, step * .04)));
+        if (sequence.every(y => y !== undefined)
+          && (!options.strict || completeSequence(sequence, lines, step))) rows = sequence;
       }
     }
     if (!rows) return null;
     const xs = [];
     for (let x = 0; x < width; x++) {
       let hit = 0, count = 0;
-      for (let y = rows[0]; y <= rows[15]; y += 5) { count++; if (neutral(x, y)) hit++; }
+      for (let y = rows[0]; y <= rows[rowCount]; y += 5) { count++; if (neutral(x, y)) hit++; }
       if (hit / count > .55) xs.push(x);
     }
     const vertical = groups(xs);
     let edges = null;
     for (const left of vertical) {
-      if (left < width * .04 || left > width * .15) continue;
-      const step = (width - left) / 7;
-      const sequence = Array.from({ length: 7 }, (_, k) => vertical.find(x => Math.abs(x - left - k * step) < step * .04));
-      if (sequence.every(x => x !== undefined)) { edges = [...sequence, width]; break; }
+      if (edges) break;
+      if (left < width * .025 || left > width * .3) continue;
+      for (const right of options.strict ? vertical : [...vertical, width]) {
+        if (right < width * .7) continue;
+        const step = (right - left) / dayCount;
+        if (step < width * .07) continue;
+        const sequence = Array.from({ length: dayCount }, (_, k) => vertical.find(x => Math.abs(x - left - k * step) <= Math.max(1, step * .04)));
+        if (sequence.every(x => x !== undefined)
+          && (!options.strict || completeSequence([...sequence, right], vertical.filter(x => x >= left), step))) {
+          edges = [...sequence, right]; break;
+        }
+      }
     }
     if (!edges) return null;
-    const periods = [1, 2, 3, 4, 5, 0, 0, 6, 7, 8, 9, 10, 11, 12, 13];
     const cells = [];
-    for (let d = 0; d < 7; d++) {
-      for (let row = 0; row < 15; row++) {
-        let hit = 0, count = 0;
-        const dx = edges[d + 1] - edges[d], dy = rows[row + 1] - rows[row];
-        for (let y = Math.ceil(rows[row] + dy * .15); y < rows[row + 1] - dy * .15; y += 3) {
-          for (let x = Math.ceil(edges[d] + dx * .15); x < edges[d + 1] - dx * .15; x += 3) {
-            const i = (y * width + x) * 4;
-            count++;
-            if (Math.max(data[i], data[i + 1], data[i + 2]) - Math.min(data[i], data[i + 1], data[i + 2]) > 45) hit++;
-          }
-        }
-        if (count && hit / count > .2) {
+    for (let d = 0; d < dayCount; d++) {
+      for (let row = 0; row < rowCount; row++) {
+        if (coloredCell(data, width, height, edges[d], edges[d + 1], rows[row], rows[row + 1])) {
           if (!periods[row]) return null; // Noon content contradicts this template.
           cells.push({ day: days[d], period: periods[row] });
         }
@@ -78,11 +106,26 @@
       if (previous && previous.day === cell.day && previous.endPeriod + 1 === cell.period) previous.endPeriod = cell.period;
       else busy.push({ day: cell.day, startPeriod: cell.period, endPeriod: cell.period });
     }
-    return { busy, provider: '本地彩色网格（13节＋两行午休，请核对）', demo: false, text: '', imageUrl: '' };
+    return { busy, provider: '本地彩色网格', demo: false, text: '', imageUrl: '', emptyWeek: false,
+      layout: { rowCount, dayCount } };
+  }
+  function detectAuto(data, width, height) {
+    const results = [];
+    for (const rowCount of [12, 13, 14]) {
+      for (const dayCount of [5, 7]) {
+        const result = detect(data, width, height, {
+          periods: Array.from({ length: rowCount }, (_, i) => i + 1), dayCount, strict: true
+        });
+        if (result) results.push(result);
+      }
+    }
+    // Lunch rows and partial/ambiguous grids need labels or a selected layout.
+    return results.length === 1 ? results[0] : null;
   }
   function match(value, times, window) {
     if (!window || window.start < 0 || window.end > 1440 || window.start >= window.end) return 'unknown';
     if (!value || !Array.isArray(value.busy)) return 'unknown';
+    if (!value.busy.length && value.emptyWeek === false) return 'unknown';
     let missing = false;
     const minutes = text => /^([01]\d|2[0-3]):[0-5]\d$/.test(text || '') ? Number(text.slice(0, 2)) * 60 + Number(text.slice(3)) : null;
     for (const block of value.busy.filter(b => b.day === window.day)) {
@@ -95,7 +138,7 @@
     }
     return missing ? 'unknown' : 'free';
   }
-  const api = { detect, match };
+  const api = { detect, detectAuto, match, coloredCell };
   if (typeof module !== 'undefined') module.exports = api;
   else root.TimetableOccupancy = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

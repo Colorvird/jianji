@@ -266,7 +266,7 @@ async function routeApi(req, res, url) {
   match = /^\/api\/surveys\/admin\/([^/]+)\/export\.csv$/.exec(pathname);
   if (match && method === 'GET') {
     const survey = store.findSurveyByAdminToken(match[1]);
-    const csv = store.csvFor(match[1]);
+    const csv = store.csvFor(match[1], url.searchParams.get('view') === 'raw' ? 'raw' : 'summary');
     const filename = encodeURIComponent(`${survey.title}-汇总-${new Date().toISOString().slice(0, 10)}.csv`);
     return send(res, 200, csv, {
       'Content-Type': 'text/csv; charset=utf-8',

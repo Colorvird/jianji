@@ -10,7 +10,8 @@ const DEMO_COURSES = [
 ];
 
 const DAY_RE = /^(?:周|星期)\s*([一二三四五六日天])$/;
-const DAY_HEADER_RE = /^周([一二三四五六日天])$/;
+const DAY_HEADER_RE = /^(?:周|星期|礼拜)([一二三四五六日天1-7])$/;
+const WEEK_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const TIME_RE = /(\d{1,2})\s*:\s*(\d{2})\s*(?:-|–|—|~|～|至|到)\s*(\d{1,2})\s*:\s*(\d{2})/;
 const DAY_MAP = { 一: '周一', 二: '周二', 三: '周三', 四: '周四', 五: '周五', 六: '周六', 日: '周日', 天: '周日' };
 const CN_NUMBERS = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
@@ -80,7 +81,7 @@ function median(values) {
 }
 
 function integerLabel(text) {
-  const compact = String(text || '').trim().replace(/\s+/g, '');
+  const compact = String(text || '').trim().replace(/\s+/g, '').replace(/^第/, '').replace(/节$/, '');
   if (/^\d{1,2}$/.test(compact)) {
     const value = Number(compact);
     return value >= 1 && value <= 24 ? value : 0;
@@ -94,10 +95,20 @@ function integerLabel(text) {
   return 0;
 }
 
+function periodLabel(text) {
+  const compact = String(text || '').replace(/\s+/g, '').replace(/^第/, '').replace(/节$/, '');
+  const parts = compact.split(/[-–—~～至、,，]/);
+  const start = integerLabel(parts[0]), end = integerLabel(parts.at(-1));
+  if (!start || !end || end < start || end > 24 || parts.length > 2) return null;
+  return { start, end, period: (start + end) / 2 };
+}
+
 function isGridNoise(text) {
-  const value = String(text || '').trim();
+  const value = String(text || '').replace(/\s+/g, '');
   return !value
-    || /^(?:\d{1,2}|[一二三四五六七八九十]{1,2})$/.test(value)
+    || Boolean(periodLabel(value))
+    || /^\d{1,2}[:：]\d{2}(?:[-–—~～至到]\d{1,2}[:：]\d{2})?$/.test(value)
+    || /^\d{1,2}[-/]\d{1,2}$/.test(value)
     || /^(?:上午|下午|中午|晚上|节次|周[一二三四五六日天]|星期[一二三四五六日天])$/.test(value)
     || /^(?:我的课表|长按格子添加备注|点空白格子.*|首页|我课表|消息|备注.*)$/.test(value)
     || /^\d{1,2}月?$/.test(value);
@@ -130,55 +141,79 @@ function mergeBusyCells(cells) {
 
 function parseOccupancyGrid(lines) {
   const geometry = lines.map((line) => ({ text: lineText(line), words: Array.isArray(line.Words) ? line.Words : [], ...lineGeometry(line) })).filter((line) => line.text);
-  const dayHeaders = [];
+  // OCR often combines the header row, or splits "星期一" into separate words.
+  const labels = [...geometry];
   for (const line of geometry) {
-    const match = DAY_HEADER_RE.exec(line.text);
+    for (let index = 0; index < line.words.length; index++) {
+      for (let length = 1; length <= 4 && index + length <= line.words.length; length++) {
+        const words = line.words.slice(index, index + length);
+        if (words.some((word, i) => i && (
+          Number(word.Left) - Number(words[i - 1].Left) - Number(words[i - 1].Width) > Math.max(8, Number(word.Height) * 1.5)
+          || Math.abs(Number(word.Top) - Number(words[i - 1].Top)) > Math.max(8, Number(word.Height))
+        ))) break;
+        labels.push({ text: words.map(word => word.WordText || '').join(''), ...lineGeometry({ Words: words }) });
+      }
+    }
+  }
+  const dayHeaders = [];
+  for (const line of labels) {
+    const match = DAY_HEADER_RE.exec(line.text.replace(/\s+/g, ''));
     if (!match) continue;
-    const day = DAY_MAP[match[1]];
-    if (!dayHeaders.some((item) => item.day === day && Math.abs(item.x - line.x) < 40)) {
+    const day = DAY_MAP[match[1]] || WEEK_DAYS[Number(match[1]) - 1];
+    if (!dayHeaders.some((item) => item.day === day)) {
       dayHeaders.push({ day, x: line.x, y: line.y });
     }
   }
   dayHeaders.sort((a, b) => a.x - b.x);
   if (dayHeaders.length < 2) return { days: [], columns: [], periods: [], busy: [] };
 
-  const dayStep = median(dayHeaders.slice(1).map((item, index) => item.x - dayHeaders[index].x)) || 160;
-  const columns = dayHeaders.map((item) => ({
-    day: item.day,
-    center: item.x,
-    left: item.x - dayStep / 2,
-    right: item.x + dayStep / 2
-  }));
+  const steps = dayHeaders.slice(1).map((item, index) =>
+    (item.x - dayHeaders[index].x) / (WEEK_DAYS.indexOf(item.day) - WEEK_DAYS.indexOf(dayHeaders[index].day)));
+  if (steps.some(step => step <= 0)) return { days: [], columns: [], periods: [], busy: [] };
+  const dayStep = median(steps);
+  const origin = median(dayHeaders.map(item => item.x - WEEK_DAYS.indexOf(item.day) * dayStep));
+  // Infer gaps between recognized weekdays, without inventing weekend columns.
+  const columns = WEEK_DAYS.slice(WEEK_DAYS.indexOf(dayHeaders[0].day), WEEK_DAYS.indexOf(dayHeaders.at(-1).day) + 1).map(day => {
+    const center = origin + WEEK_DAYS.indexOf(day) * dayStep;
+    return { day, center, left: center - dayStep / 2, right: center + dayStep / 2 };
+  });
   const leftLimit = columns[0].left + 8;
   const tableTop = dayHeaders[0].y;
-  const candidates = geometry
-    .map((line) => ({ ...line, period: integerLabel(line.text) }))
-    .filter((line) => line.period && line.x < leftLimit && line.y > tableTop + 10)
+  const candidates = labels
+    .map((line) => ({ ...line, label: periodLabel(line.text) }))
+    .filter((line) => line.label && line.right < leftLimit && line.y > tableTop + 10)
     .sort((a, b) => a.y - b.y);
   const known = [];
   for (const item of candidates) {
-    if (!known.some((row) => row.period === item.period || Math.abs(row.y - item.y) < 12)) known.push(item);
+    if (!known.some((row) => row.label.start <= item.label.end && row.label.end >= item.label.start)) known.push(item);
   }
   if (known.length < 2) return { days: dayHeaders.map((item) => item.day), columns, periods: [], busy: [] };
 
   const stepCandidates = [];
   for (let index = 1; index < known.length; index += 1) {
     const gap = known[index].y - known[index - 1].y;
-    if (gap > 40 && gap < 500) stepCandidates.push(gap / Math.max(1, known[index].period - known[index - 1].period));
+    const periodGap = known[index].label.period - known[index - 1].label.period;
+    if (gap > 0 && periodGap > 0) stepCandidates.push(gap / periodGap);
   }
   let rowStep = median(stepCandidates);
   if (!rowStep) rowStep = median(known.slice(1).map((item, index) => item.y - known[index].y)) || 80;
 
   const rowMap = new Map();
-  for (const item of known) rowMap.set(item.period, item.y);
+  for (const item of known) {
+    for (let period = item.label.start; period <= item.label.end; period++) {
+      rowMap.set(period, item.y + (period - item.label.period) * rowStep);
+    }
+  }
   for (let index = 1; index < known.length; index += 1) {
     const previous = known[index - 1];
     const next = known[index];
-    const gap = next.period - previous.period;
+    const gap = next.label.start - previous.label.end;
     if (gap <= 1) continue;
-    for (let period = previous.period + 1; period < next.period; period += 1) {
-      const inferredY = previous.y + (period - previous.period) * rowStep;
-      if (inferredY < next.y - rowStep * 0.4) rowMap.set(period, inferredY);
+    const previousY = rowMap.get(previous.label.end), nextY = rowMap.get(next.label.start);
+    // Do not place missing periods across a lunch break of unknown length.
+    if (Math.abs((nextY - previousY) / gap - rowStep) > rowStep * .2) continue;
+    for (let period = previous.label.end + 1; period < next.label.start; period += 1) {
+      rowMap.set(period, previousY + (nextY - previousY) * (period - previous.label.end) / gap);
     }
   }
   const periods = [...rowMap.entries()]
@@ -186,22 +221,41 @@ function parseOccupancyGrid(lines) {
     .map(([period, y]) => ({ period, center: y, top: y - rowStep / 2, bottom: y + rowStep / 2 }));
   const marked = new Set();
   for (const line of geometry) {
-    for (const word of line.words) {
+    const words = line.words.length ? line.words : [{ WordText: line.text, Left: line.left, Top: line.top, Width: line.right - line.left, Height: line.bottom - line.top }];
+    for (const word of words) {
       const text = String(word.WordText || '').trim();
       if (isGridNoise(text)) continue;
       const x = Number(word.Left) + Number(word.Width || 0) / 2;
       const y = Number(word.Top) + Number(word.Height || 0) / 2;
       const column = columns.find((item) => x >= item.left && x <= item.right);
-      const row = periods.find((item) => y >= item.top && y <= item.bottom);
-      if (column && row) marked.add(`${column.day}|${row.period}`);
+      const row = periods.find((item) => y >= item.top && y < item.bottom);
+      if (column && row) {
+        const grouped = known.find(item => row.period >= item.label.start && row.period <= item.label.end);
+        const start = grouped ? grouped.label.start : row.period;
+        const end = grouped ? grouped.label.end : row.period;
+        for (let period = start; period <= end; period++) marked.add(`${column.day}|${period}`);
+      }
     }
+  }
+  // A merged course cell can put all of its text in just one of its periods.
+  // Expand only explicit "1-2节" annotations that agree with that text's row.
+  for (const line of labels) {
+    const range = /(?:^|[([【（\s])第?(\d{1,2})\s*[-–—~～至、,，]\s*(\d{1,2})\s*节(?:$|[)\]】）\s])/.exec(line.text);
+    if (!range) continue;
+    const start = Number(range[1]), end = Number(range[2]);
+    if (end <= start || end > 24) continue;
+    const column = columns.find(item => line.x >= item.left && line.x < item.right);
+    const row = periods.find(item => line.y >= item.top && line.y < item.bottom);
+    if (!column || !row || row.period < start || row.period > end) continue;
+    if (!Array.from({ length: end - start + 1 }, (_, i) => start + i).every(period => rowMap.has(period))) continue;
+    for (let period = start; period <= end; period++) marked.add(`${column.day}|${period}`);
   }
   const cells = [...marked].map((key) => {
     const [day, period] = key.split('|');
     return { day, period: Number(period) };
   });
   return {
-    days: dayHeaders.map((item) => item.day),
+    days: columns.map((item) => item.day),
     columns,
     periods,
     busy: mergeBusyCells(cells)
@@ -306,10 +360,15 @@ function coursesFromOcrSpace(payload) {
   const overlayCourses = lines.length ? parseOverlayLines(lines) : [];
   const courses = dedupeCourses(overlayCourses.length ? overlayCourses : parseTextLines(text));
   const grid = lines.length ? parseOccupancyGrid(lines) : { days: [], columns: [], periods: [], busy: [] };
-  if (!courses.length && !text.trim()) {
+  if (!courses.length && !text.trim() && !lines.some(lineText)) {
     const message = payload && payload.ErrorMessage ? String(Array.isArray(payload.ErrorMessage) ? payload.ErrorMessage.join(' ') : payload.ErrorMessage) : '没有识别到文字';
     throw new Error(message);
   }
+  if (grid.columns.length < 2 || grid.periods.length < 2) {
+    throw new Error('未能定位星期和节次，请裁剪出完整课表，或选择课表版式后重试。也可以对照原图手动标记。');
+  }
+  // A valid empty geometry still lets the browser find colored course blocks.
+  // The browser requires occupied cells or explicit empty-week confirmation.
   return { courses, busy: grid.busy, grid, text: text.trim() || lines.map(lineText).join('\n') };
 }
 
@@ -321,8 +380,9 @@ async function recognizeWithOcrSpace(buffer, mimeType) {
   form.append('isOverlayRequired', 'true');
   form.append('isTable', 'true');
   form.append('OCREngine', '2');
-  form.append('scale', 'true');
-  form.append('detectOrientation', 'true');
+  // Pixel analysis uses the uploaded image's coordinates.
+  form.append('scale', 'false');
+  form.append('detectOrientation', 'false');
   form.append('base64Image', `data:${mimeType};base64,${buffer.toString('base64')}`);
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -343,7 +403,7 @@ async function recognizeWithOcrSpace(buffer, mimeType) {
   return {
     provider: 'ocrspace',
     demo: false,
-    confidence: Math.max(Math.round(confidence * 100) / 100, parsed.busy.length ? 0.86 : 0),
+    confidence: Math.round(confidence * 100) / 100,
     courses: parsed.courses,
     busy: parsed.busy,
     grid: parsed.grid,
